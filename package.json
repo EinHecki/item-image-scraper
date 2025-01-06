@@ -1,0 +1,17 @@
+{
+  "name": "item-image-scraper",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
+    "fs-extra": "^11.2.0"
+  }
+}
