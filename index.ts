@@ -1,49 +1,67 @@
-import fs from "fs-extra";
+import fs from "fs";
 import path from "path";
 import axios from "axios";
-import { load } from "cheerio";
+import { type CheerioAPI, load } from "cheerio";
+import { confirm, input, select } from "@inquirer/prompts";
 
-const resolution = "120px";
-const blockWikiUrl = "https://minecraft.wiki/w/Block";
-const itemWikiUrl = "https://minecraft.wiki/w/Item";
-const outputDir = path.join(__dirname, "assets");
+type MaterialType = "blocks" | "items";
 
-await fs.ensureDir(outputDir);
+type Answers = {
+  type: MaterialType;
+  output: string;
+  resolution: string;
+  asBukkit: boolean;
+};
 
-const imageUrls: { imageUrl: string; fileName: string }[] = [];
+const urls: Map<MaterialType, string> = new Map([
+  ["blocks", "https://minecraft.wiki/w/Block"],
+  ["items", "https://minecraft.wiki/w/Item"],
+]);
 
-async function scrapeBlockTextures() {
-  const { data: html } = await axios.get(blockWikiUrl);
-  const $ = load(html);
+const answers: Answers = {
+  type: await select<MaterialType>({
+    message: "What type do you want to export?",
+    choices: [
+      { name: "Blocks", value: "blocks" },
+      { name: "Items", value: "items" },
+    ],
+  }),
+  output: await input({
+    message: "Where should the images be exported to?",
+    default: "./assets/",
+  }),
+  resolution: await input({
+    message: "How should the resolution be?",
+    default: "60px",
+  }),
+  asBukkit: await confirm({
+    message: "Should the file names be exported as Bukkit material?",
+    default: false,
+  }),
+};
 
-  $("div.div-col.columns.column-width")
-    .first()
-    .find("ul li")
-    .each((_, element) => {
-      const imgTag = $(element).find("a.mw-file-description img");
-      const srcSet = imgTag.attr("srcset");
-      const titleTag = $(element).find("a.mw-redirect");
+const output: string = answers.output;
+const url: string = urls.get(answers.type)!!;
 
-      if (srcSet && titleTag.length > 0) {
-        const highResUrl = srcSet.split(",")[0].trim().split(" ")[0];
-        const updatedUrl = highResUrl.replace(/\/\d+px-/, `/${resolution}-`);
-        const title = titleTag.attr("title");
-
-        if (updatedUrl && title) {
-          const sanitizedTitle = title.replace(/\s+/g, "_");
-          imageUrls.push({
-            imageUrl: `https://minecraft.wiki${updatedUrl}`,
-            fileName: `${sanitizedTitle}.png`,
-          });
-        }
-      }
-    });
+if (!fs.existsSync(output)) {
+  fs.mkdirSync(output);
 }
 
-async function scrapeItemTextures() {
-  const { data: html } = await axios.get(itemWikiUrl);
-  const $ = load(html);
+const imageUrls: Map<string, string> = new Map();
 
+const { data: html } = await axios.get(url);
+const $ = load(html);
+
+switch (answers.type) {
+  case "items":
+    await exportItems($);
+    break;
+  case "blocks":
+    await exportBlocks($);
+    break;
+}
+
+async function exportItems($: CheerioAPI) {
   $("div.div-col.columns.column-width:lt(4)")
     .find("ul li")
     .each((_, element) => {
@@ -51,36 +69,67 @@ async function scrapeItemTextures() {
       const src = imgTag.attr("src");
       const titleTag = $(element).find("span.sprite-text");
 
-      if (titleTag.length === 0) {
-        console.log("No title tag found for item");
-
-        console.log(src);
-      }
-
       if (src && titleTag.length > 0) {
-        const highResUrl = src.split(",")[0].trim().split(" ")[0];
-        const updatedUrl = highResUrl.replace(/\/\d+px-/, `/${resolution}-`);
         const title = titleTag.text();
 
-        if (updatedUrl && title) {
-          const sanitizedTitle = title.replace(/\s+/g, "_");
-          imageUrls.push({
-            imageUrl: `https://minecraft.wiki${updatedUrl}`,
-            fileName: `${sanitizedTitle}.png`,
-          });
+        if (src && title) {
+          let sanitizedTitle = title.replace(/\s+/g, "_");
+          if (answers.asBukkit) {
+            sanitizedTitle = sanitizedTitle.toUpperCase();
+          }
+          imageUrls.set(
+            `https://minecraft.wiki${src}`,
+            `${sanitizedTitle}.png`
+          );
+          console.log(`${sanitizedTitle} -> ${src}`);
         }
       }
     });
+
+  imageUrls.entries().forEach(([imageUrl, name]) => {
+    const filePath = path.join(answers.output, name);
+    console.log(`[ITEM] ${name}: ${imageUrl}`);
+    fetch(imageUrl).then((response) => {
+      Bun.write(filePath, response);
+    });
+  });
 }
 
-await scrapeBlockTextures();
-await scrapeItemTextures();
+async function exportBlocks($: CheerioAPI) {
+  $("div.div-col.columns.column-width")
+    .first()
+    .find("ul li")
+    .each((_, element) => {
+      const imgTag = $(element).find("a.mw-file-description img");
+      const srcSet = imgTag.attr("srcset");
+      const titleTag = $(element).find("a").last();
 
-for (const { imageUrl, fileName } of imageUrls) {
-  const filePath = path.join(outputDir, fileName);
+      if (srcSet && titleTag.length > 0) {
+        const highResUrl = srcSet.split(",")[0].trim().split(" ")[0];
+        const updatedUrl = highResUrl.replace(
+          /\/\d+px-/,
+          `/${answers.resolution}-`
+        );
+        const title = titleTag.attr("title");
 
-  console.log(`${fileName} -> ${imageUrl}`);
+        if (updatedUrl && title) {
+          let sanitizedTitle = title.replace(/\s+/g, "_");
+          if (answers.asBukkit) {
+            sanitizedTitle = sanitizedTitle.toUpperCase();
+          }
+          imageUrls.set(
+            `https://minecraft.wiki${updatedUrl}`,
+            `${sanitizedTitle}.png`
+          );
+        }
+      }
+    });
 
-  const response = await fetch(imageUrl);
-  await Bun.write(filePath, response);
+  imageUrls.entries().forEach(([imageUrl, name]) => {
+    const filePath = path.join(answers.output, name);
+    console.log(`[BLOCK] ${name}: ${imageUrl}`);
+    fetch(imageUrl).then((response) => {
+      Bun.write(filePath, response);
+    });
+  });
 }
