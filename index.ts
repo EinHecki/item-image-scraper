@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import axios from "axios";
 import { type CheerioAPI, load } from "cheerio";
-import { confirm, input, select } from "@inquirer/prompts";
+import { input, select } from "@inquirer/prompts";
 
 type MaterialType = "blocks" | "items";
 
@@ -10,7 +10,6 @@ type Answers = {
   type: MaterialType;
   output: string;
   resolution: string;
-  asBukkit: boolean;
 };
 
 const urls: Map<MaterialType, string> = new Map([
@@ -33,10 +32,6 @@ const answers: Answers = {
   resolution: await input({
     message: "How should the resolution be?",
     default: "60px",
-  }),
-  asBukkit: await confirm({
-    message: "Should the file names be exported as Bukkit material?",
-    default: false,
   }),
 };
 
@@ -67,22 +62,15 @@ async function exportItems($: CheerioAPI) {
     .each((_, element) => {
       const imgTag = $(element).find("img.mw-file-element");
       const src = imgTag.attr("src");
-      const titleTag = $(element).find("span.sprite-text");
+      const name = $(element).find("a").text();
 
-      if (src && titleTag.length > 0) {
-        const title = titleTag.text();
-
-        if (src && title) {
-          let sanitizedTitle = title.replace(/\s+/g, "_");
-          if (answers.asBukkit) {
-            sanitizedTitle = sanitizedTitle.toUpperCase();
-          }
-          imageUrls.set(
-            `https://minecraft.wiki${src}`,
-            `${sanitizedTitle}.png`
-          );
-          console.log(`${sanitizedTitle} -> ${src}`);
-        }
+      if (src && (name && name.length > 0)) {
+        const sanitizedName: string = "item.minecraft." + name.replace(/\s+/g, "_").toLowerCase();
+        imageUrls.set(
+          `https://minecraft.wiki${src}`,
+          `${sanitizedName}.png`
+        );
+        console.log(`${sanitizedName} -> ${src}`);
       }
     });
 
@@ -102,24 +90,20 @@ async function exportBlocks($: CheerioAPI) {
     .each((_, element) => {
       const imgTag = $(element).find("a.mw-file-description img");
       const srcSet = imgTag.attr("srcset");
-      const titleTag = $(element).find("a").last();
+      const name = $(element).find("a").text();
 
-      if (srcSet && titleTag.length > 0) {
+      if (srcSet && (name && name.length > 0)) {
         const highResUrl = srcSet.split(",")[0].trim().split(" ")[0];
         const updatedUrl = highResUrl.replace(
           /\/\d+px-/,
           `/${answers.resolution}-`
         );
-        const title = titleTag.attr("title");
 
-        if (updatedUrl && title) {
-          let sanitizedTitle = title.replace(/\s+/g, "_");
-          if (answers.asBukkit) {
-            sanitizedTitle = sanitizedTitle.toUpperCase();
-          }
+        if (updatedUrl) {
+          const sanitizedName: string = "block.minecraft." + name.replace(/\s+/g, "_").toLowerCase();
           imageUrls.set(
             `https://minecraft.wiki${updatedUrl}`,
-            `${sanitizedTitle}.png`
+            `${sanitizedName}.png`
           );
         }
       }
